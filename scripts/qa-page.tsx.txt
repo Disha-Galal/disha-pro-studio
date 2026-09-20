@@ -1,0 +1,4 @@
+'use client';
+import {useState} from 'react';
+import {runBrowserChecks} from '../../scripts/browser-checks';
+export default function QA(){const [result,setResult]=useState('Ready');return <main><button onClick={async()=>{setResult('Running');try{setResult(await runBrowserChecks());}catch(e){setResult(String(e));}}}>Run checks</button><pre>{result}</pre></main>;}
