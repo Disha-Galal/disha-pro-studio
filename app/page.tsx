@@ -1,21 +1,212 @@
 'use client';
-import Link from 'next/link';
-import type {Change} from 'diff';
-import {useState,useRef,useMemo} from 'react';
-import {Upload,FileText,Download,ShieldCheck,Undo2,Copy,Scissors,Files,Check,Search,Braces,LockKeyhole} from 'lucide-react';
-import {Button} from '@/components/ui/button';
-import {Tabs,TabsList,TabsTrigger,TabsContent} from '@/components/ui/tabs';
-import {Input} from '@/components/ui/input';
-import {Textarea} from '@/components/ui/textarea';
-import {readDocument,exportDocument,transform,statistics,cryptFile,releaseOcr,takeNotes} from '@/lib/processor';
-type Item={name:string;text:string};
-export default function Home(){
-const [text,setText]=useState(''),[history,setHistory]=useState<string[]>([]),[files,setFiles]=useState<Item[]>([]),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[encoding,setEncoding]=useState('utf-8'),[format,setFormat]=useState('txt'),[name,setName]=useState('disha-document'),[find,setFind]=useState(''),[replacement,setReplacement]=useState(''),[other,setOther]=useState(''),[ocr,setOcr]=useState(false),[password,setPassword]=useState(''),[cryptoFile,setCryptoFile]=useState<File|null>(null),[diff,setDiff]=useState<Change[]>([]);const picker=useRef<HTMLInputElement>(null);const sessionPicker=useRef<HTMLInputElement>(null);const stats=useMemo(()=>statistics(text),[text]);
-function change(t:string){if(t.length>2000000){setMessage('النص أكبر من الحد المسموح: مليونا حرف.');return;}setHistory(h=>[...h.slice(-9),text]);setText(t);}
-async function load(list:FileList|null){if(!list)return;setBusy(true);setMessage('جارٍ قراءة الملفات…');const result:Item[]=[];const errors:string[]=[];takeNotes();try{for(const f of Array.from(list).slice(0,10)){try{const t=await readDocument(f,encoding,ocr,setMessage);result.push({name:f.name,text:t});}catch(e){errors.push(f.name+': '+(e as Error).message);}}setFiles(old=>[...old,...result].slice(-20));if(result.length){change([text,...result.map(x=>x.text)].filter(Boolean).join('\n\n'));setName(result[0].name.replace(/\.[^.]+$/,''));}setMessage([result.length?`تمت قراءة ${result.length} ملف. راجع النص قبل تنزيله.`:'',...errors,...takeNotes(),list.length>10?'الحد الأقصى 10 ملفات في المرة.':''].filter(Boolean).join(' • '));}finally{try{await releaseOcr();}catch{setMessage(m=>m+' • تعذر إغلاق محرك OCR؛ أعد تحميل الصفحة عند الحاجة.');}setBusy(false);if(picker.current)picker.current.value='';}}
-async function runExport(){setBusy(true);try{await exportDocument(text,format,name);setMessage(format==='pdf'?'اختر «حفظ بتنسيق PDF» من نافذة الطباعة.':'الملف جاهز للتنزيل.');}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}}
-async function cryptoAction(mode:boolean){if(!cryptoFile)return;setBusy(true);try{await cryptFile(cryptoFile,password,mode);setMessage('تمت العملية. احتفظ بكلمة السر لاستعادة الملف.');setPassword('');}catch{setMessage('تعذرت العملية: راجع كلمة السر وصيغة الملف وحجمه (20 MB).');}finally{setBusy(false);}}
-function saveSession(){const blob=new Blob([JSON.stringify({app:'disha-pro-session',version:1,text,name,format,encoding},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='disha-session.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);setMessage('تم تنزيل الجلسة كنص غير مشفر. احتفظ بها في مكان مناسب.');}
-async function restoreSession(file:File|undefined){if(!file)return;try{if(file.size>10*1024*1024)throw Error();const d=JSON.parse(await file.text());if(d.app!=='disha-pro-session'||d.version!==1||typeof d.text!=='string'||d.text.length>2000000||typeof d.name!=='string'||d.name.length>200||!['txt','pdf','docx','md','html','json','csv'].includes(d.format)||!['utf-8','windows-1256','utf-16le','iso-8859-6'].includes(d.encoding))throw Error();change(d.text);setName(d.name);setFormat(d.format);setEncoding(d.encoding);setMessage('تم استرجاع النص وإعدادات التصدير. يمكنك التراجع عن استبدال النص.');}catch{setMessage('ملف الجلسة غير صالح أو أكبر من الحد المسموح.');}finally{if(sessionPicker.current)sessionPicker.current.value='';}}
-return <div className="shell" dir="rtl"><header><Link className="brand" href="/"><span className="brand-icon"><FileText size={24}/></span><span dir="ltr">DISHA<span className="brand-pro"> PRO</span><small>استوديو النصوص والملفات</small></span></Link><div className="private"><ShieldCheck size={17}/> ملفاتك تُعالج على جهازك</div><span className="version">WEB / 02</span></header><main><div className="heading"><div><div className="eyebrow">مساحة عملك، بدون تعقيد</div><h1>من أي مستند، <span>إلى نص مفيد.</span></h1><p>اقرأ، نظّف، حرّر وحوّل ملفاتك. أنت تختار ما تنزّله.</p></div><div className="signature" dir="ltr">BUILT BY<br/><strong>DISHA GALAL</strong></div></div><div className="workspace"><aside><section className="panel import-panel"><div className="section-label"><span>01</span> إضافة المحتوى</div><div className="drop" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(!busy)load(e.dataTransfer.files);}}><span className="upload-icon"><Upload size={28}/></span><h2>ملفاتك تبدأ هنا</h2><p>اسحب ملفاتك أو اخترها من جهازك</p><Button disabled={busy} onClick={()=>picker.current?.click()}>اختيار ملفات <Upload size={16}/></Button><input ref={picker} type="file" multiple hidden onChange={e=>load(e.target.files)}/><small>حتى 20 MB للملف · 10 ملفات في المرة</small></div><div className="formats">TXT · PDF · DOCX · XLSX · PPTX<br/>CSV · HTML · MD · ODT · EPUB · صور</div><label className="field">ترميز الملفات النصية<select value={encoding} onChange={e=>setEncoding(e.target.value)}><option value="utf-8">UTF-8 (افتراضي)</option><option value="windows-1256">Windows-1256 — عربي قديم</option><option value="utf-16le">UTF-16 LE</option><option value="iso-8859-6">ISO-8859-6</option></select></label><label className="check"><input type="checkbox" checked={ocr} onChange={e=>setOcr(e.target.checked)}/> تفعيل قراءة الصور وPDF الممسوح (OCR)</label><p className="hint">OCR يحمّل نموذج العربية والإنجليزية عند أول استخدام، وقد يستهلك بيانات ووقتًا. عند تفعيله يقرأ كل صفحات PDF كصور؛ يفيد عند ظهور العربية معكوسة. الحد 20 صفحة.</p></section><section className="panel queue"><h3><Files size={17}/> الملفات المقروءة <span>{files.length}</span></h3>{files.length?files.map((f,i)=><button key={i} onClick={()=>{change(f.text);setName(f.name.replace(/\.[^.]+$/,''));}} className="file-row" disabled={busy}><FileText size={18}/><span dir="auto">{f.name}</span><Check size={14}/></button>):<p className="hint">ستظهر ملفاتك هنا. يمكن دمجها تلقائيًا أو فتح نص كل ملف.</p>}<p className="hint">المحتوى مؤقت؛ إغلاق الصفحة يمسحه. نزّل ما تريد الاحتفاظ به.</p></section></aside><div className="work-main"><section className="panel editor-panel"><div className="editor-title"><div className="section-label"><span>02</span> مساحة التحرير</div><div className="editor-actions"><Button variant="ghost" size="sm" disabled={!history.length||busy} onClick={()=>{setText(history.at(-1)!);setHistory(h=>h.slice(0,-1));}}><Undo2 size={16}/> تراجع</Button><Button variant="ghost" size="sm" disabled={!text} onClick={async()=>{try{await navigator.clipboard.writeText(text);setMessage('تم نسخ النص.');}catch{setMessage('تعذر النسخ. حدّد النص وانسخه يدويًا.');}}}><Copy size={16}/> نسخ</Button></div></div><Textarea aria-label="النص القابل للتحرير" dir="auto" value={text} disabled={busy} onChange={e=>setText(e.target.value.slice(0,2000000))} placeholder={'اكتب أو الصق نصك هنا…\n\nأو أضف ملفًا وستجد محتواه جاهزًا للتحرير.'} className="editor"/><div className="stats"><span><b>{stats.words.toLocaleString('ar-EG')}</b> كلمة</span><span><b>{stats.chars.toLocaleString('ar-EG')}</b> حرف</span><span><b>{stats.lines.toLocaleString('ar-EG')}</b> سطر</span><span>قراءة ≈ {stats.minutes} دقيقة</span></div></section><div role="status" aria-live="polite" className={'status '+(busy?'working':'')}>{busy?<span className="spinner"/>:<ShieldCheck size={16}/>} {message||'جاهز للعمل. المعاينة لا تحفظ ملفاتك؛ لا يتم تنزيل شيء تلقائيًا.'}</div><section className="panel toolbox"><Tabs defaultValue="clean" dir="rtl"><TabsList className="tool-tabs"><TabsTrigger value="clean"><Scissors size={16}/> تنظيف</TabsTrigger><TabsTrigger value="search"><Search size={16}/> بحث واستخراج</TabsTrigger><TabsTrigger value="analysis"><Braces size={16}/> تحليل ومقارنة</TabsTrigger><TabsTrigger value="secure"><LockKeyhole size={16}/> تشفير</TabsTrigger></TabsList><TabsContent value="clean"><h3>نص مرتب، بخطوة واحدة</h3><div className="tools">{[['clean','تنظيف المسافات'],['empty','حذف السطور الفارغة'],['dedupe','إزالة السطور المكررة'],['sort','ترتيب أبجدي ↑'],['reverse','ترتيب أبجدي ↓'],['arabic','إزالة التشكيل والتطويل'],['upper','UPPERCASE'],['lower','lowercase']].map(([id,label])=><Button variant="outline" key={id} disabled={!text||busy} onClick={()=>{change(transform(text,id));setMessage('تم التعديل. يمكنك التراجع قبل التنزيل.');}}>{label}</Button>)}</div></TabsContent><TabsContent value="search"><div className="search-grid"><label>ابحث عن<Input value={find} onChange={e=>setFind(e.target.value)}/></label><label>استبدله بـ<Input value={replacement} onChange={e=>setReplacement(e.target.value)}/></label><Button disabled={!find||busy} onClick={()=>change(text.split(find).join(replacement))}>استبدال الكل</Button></div><p className="hint">{find?text.split(find).length-1:0} تطابق حرفي · الاستخراج يستبدل محتوى المحرر ويمكن التراجع عنه</p><div className="tools">{[['links','استخراج الروابط'],['emails','استخراج الإيميلات'],['phones','أرقام هاتف محتملة']].map(([id,label])=><Button variant="outline" key={id} disabled={!text||busy} onClick={()=>change(transform(text,id))}>{label}</Button>)}</div></TabsContent><TabsContent value="analysis"><h3>أكثر الكلمات تكرارًا</h3><div className="word-list">{stats.top.length?stats.top.map(([w,n])=><span key={w}>{w} <b>{n}</b></span>):<p className="hint">أضف نصًا لعرض التحليل.</p>}</div><label>نص ثانٍ للمقارنة<Textarea value={other} onChange={e=>setOther(e.target.value.slice(0,100000))}/></label><Button variant="outline" disabled={busy||text.length>100000} onClick={async()=>{const {diffLines}=await import('diff');setDiff(diffLines(text,other,{timeout:1500})||[]);}}>قارن السطور (حتى 100 ألف حرف)</Button><div className="diff" dir="auto">{diff.map((d,i)=><pre key={i} className={d.added?'added':d.removed?'removed':''}>{d.added?'+ ':d.removed?'− ':''}{d.value}</pre>)}</div></TabsContent><TabsContent value="secure"><h3>تشفير ملف بكلمة سر</h3><p className="hint">صيغة الويب DPRO1 تستخدم AES-GCM. يمكن الآن فك ملفات TPPF1 بصيغة .enc من السكريبت القديم تلقائيًا. فقدان كلمة السر يعني فقدان إمكانية الاستعادة.</p><Input aria-label="ملف التشفير" type="file" onChange={e=>setCryptoFile(e.target.files?.[0]||null)}/><Input aria-label="كلمة سر التشفير" type="password" placeholder="كلمة سر من 10 أحرف على الأقل" value={password} onChange={e=>setPassword(e.target.value)}/><div className="tools"><Button disabled={busy||!cryptoFile||password.length<10} onClick={()=>cryptoAction(true)}>تشفير وتنزيل</Button><Button variant="outline" disabled={busy||!cryptoFile||!password} onClick={()=>cryptoAction(false)}>فك التشفير وتنزيل</Button></div></TabsContent></Tabs></section><section className="panel session-panel"><div><h3>كمّل شغلك في أي وقت</h3><p className="hint">احفظ النص الحالي وإعدادات التصدير في ملف على جهازك، ثم افتحه هنا لاحقًا. لا يشمل الملفات الأصلية أو كلمات السر. ملف الجلسة غير مشفر.</p></div><div className="tools"><Button variant="outline" disabled={busy||!text} onClick={saveSession}>حفظ الجلسة</Button><Button variant="outline" disabled={busy} onClick={()=>sessionPicker.current?.click()}>استرجاع جلسة</Button><input type="file" accept=".json" ref={sessionPicker} hidden onChange={e=>restoreSession(e.target.files?.[0])}/></div></section><section className="panel export"><div><div className="section-label"><span>03</span> ملفك، بصيغتك</div><p className="hint">تصدير المحتوى النصي؛ لا يُحافظ على تصميم المستند الأصلي.</p></div><div className="export-controls"><Input aria-label="اسم الملف الناتج" value={name} onChange={e=>setName(e.target.value)} dir="auto"/><select aria-label="صيغة التنزيل" value={format} onChange={e=>setFormat(e.target.value)}>{['txt','pdf','docx','md','html','json','csv'].map(f=><option key={f}>{f}</option>)}</select><Button disabled={!text||busy} onClick={runExport}><Download size={17}/> {format==='pdf'?'طباعة / PDF':'تنزيل الملف'}</Button></div></section></div></div><details className="roadmap"><summary>الصيغ المدعومة وخطة التطوير</summary><p>متاح: نصوص وأكواد، PDF نصي، Word DOCX، جداول XLS/XLSX، عروض PPTX، ODT وEPUB، وOCR لصور PNG/JPG/WebP وPDF. قراءة الجداول والعروض تحولها إلى محتوى نصي. الملفات المحمية بكلمة سر وDOC/PPT القديمة غير مدعومة. OCR قد يخطئ، خصوصًا مع الخط اليدوي والجداول.</p><p>تم إنجاز: فتح تشفير السكريبت القديم وحفظ الجلسة اختياريًا. المرحلة التالية: تحسين ترتيب أعمدة PDF العربية، تحويل يحافظ على التنسيق عبر خدمة Python، وتفريغ الصوت والفيديو مع اختيار صريح للمزوّد. وظائف حذف ملفات الجهاز وحالة النظام تظل في نسخة Ubuntu.</p></details></main><footer><span dir="ltr">DISHA PRO © 2026 · Disha Galal</span><span>صُنع للنصوص العربية، ولشغلك اليومي.</span></footer></div>;
+
+import { useRef, useState } from 'react';
+import { Download, FileText, LockKeyhole, ShieldCheck, Undo2, X, Zap } from 'lucide-react';
+import { AdvancedSettings } from '@/components/parseflow/advanced-settings';
+import { Dropzone } from '@/components/parseflow/dropzone';
+import { DEFAULT_SETTINGS, processFiles, type ProcessResult, type Settings } from '@/lib/parseflow';
+import { exportDocument } from '@/lib/processor';
+import { MAX_FILES } from '@/lib/validate';
+
+type Phase = 'idle' | 'processing' | 'done';
+
+const fileKey = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
+const formatSize = (bytes: number) => (bytes < 1_048_576 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1_048_576).toFixed(1)} MB`);
+
+const BADGES = [
+  { icon: ShieldCheck, label: 'Enterprise-Grade Security' },
+  { icon: LockKeyhole, label: 'Files Never Leave Your Browser' },
+  { icon: Zap, label: 'PDF · DOCX · TXT' },
+];
+
+export default function Home() {
+  const [phase, setPhase] = useState<Phase>('idle');
+  const [files, setFiles] = useState<File[]>([]);
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [progress, setProgress] = useState({ percent: 0, message: '' });
+  const [result, setResult] = useState<ProcessResult | null>(null);
+  const [errors, setErrors] = useState<string[]>([]);
+  const startingRef = useRef(false);
+
+  function addFiles(incoming: File[]) {
+    const known = new Set(files.map(fileKey));
+    const merged = [...files, ...incoming.filter((f) => !known.has(fileKey(f)))];
+    setFiles(merged.slice(0, MAX_FILES));
+    if (merged.length > MAX_FILES) setErrors((old) => [...old, `Only ${MAX_FILES} files can be processed at a time.`]);
+  }
+
+  async function start() {
+    if (startingRef.current || !files.length) return;
+    startingRef.current = true;
+    setErrors([]);
+    setProgress({ percent: 0, message: 'Starting…' });
+    setPhase('processing');
+    try {
+      setResult(await processFiles(files, settings, (percent, message) => setProgress({ percent, message })));
+      setPhase('done');
+    } catch (error) {
+      setErrors([error instanceof Error ? error.message : 'Processing failed. Please try again.']);
+      setPhase('idle');
+    } finally {
+      startingRef.current = false;
+    }
+  }
+
+  async function download() {
+    if (!result) return;
+    const baseName = files[0]?.name.replace(/\.[^.]+$/, '') ?? 'parseflow';
+    try {
+      await exportDocument(result.text, settings.format, settings.fileName.trim() || `${baseName}-processed`);
+    } catch (error) {
+      setErrors([error instanceof Error ? error.message : 'Download failed.']);
+    }
+  }
+
+  function reset() {
+    setFiles([]);
+    setResult(null);
+    setErrors([]);
+    setPhase('idle');
+  }
+
+  const busy = phase === 'processing';
+
+  return (
+    <div className="flex min-h-screen flex-col bg-linear-to-b from-navy-950 via-navy-900 to-navy-800 font-sans" dir="ltr">
+      <header className="mx-auto flex w-full max-w-5xl items-center gap-3 px-5 py-6">
+        <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden>
+          <rect width="40" height="40" rx="10" fill="#0f2a5a" stroke="#c5cdd9" strokeWidth="1.5" />
+          <path d="M9 14h14M9 20h22M9 26h14" stroke="#e4e9f0" strokeWidth="3" strokeLinecap="round" />
+          <circle cx="30" cy="14" r="3" fill="#9aa5b5" />
+        </svg>
+        <div className="leading-tight">
+          <p className="text-xl font-extrabold tracking-wide text-white">ParseFlow</p>
+          <p className="text-xs text-steel-300">by Disha Pro Studio</p>
+        </div>
+      </header>
+
+      <main className="mx-auto w-full max-w-5xl flex-1 px-5 pb-16">
+        <section className="py-10 text-center sm:py-14">
+          <h1 className="text-4xl font-black uppercase leading-tight tracking-tight text-white sm:text-5xl lg:text-6xl">
+            Process thousands of rows <span className="metallic-text">in seconds</span>
+          </h1>
+          <p className="mx-auto mt-5 max-w-2xl text-lg text-steel-300">
+            Upload your documents, clean and structure the text, and download a processed file — all in one flow.
+          </p>
+        </section>
+
+        {phase !== 'done' && (
+          <section aria-label="Upload" className="rounded-3xl border border-steel-300 bg-white p-5 shadow-2xl shadow-black/40 sm:p-8">
+            <Dropzone disabled={busy} onAccepted={addFiles} onRejected={(reasons) => setErrors(reasons)} />
+
+            {files.length > 0 && (
+              <ul className="mt-5 divide-y divide-steel-200 rounded-xl border border-steel-200">
+                {files.map((file) => (
+                  <li key={fileKey(file)} className="flex items-center gap-3 px-4 py-3">
+                    <FileText size={20} className="shrink-0 text-navy-700" aria-hidden />
+                    <span className="min-w-0 flex-1 truncate text-navy-900" dir="auto">{file.name}</span>
+                    <span className="text-sm text-steel-500">{formatSize(file.size)}</span>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      aria-label={`Remove ${file.name}`}
+                      onClick={() => setFiles(files.filter((f) => f !== file))}
+                      className="rounded p-1 text-steel-500 hover:text-navy-900 focus-visible:outline-2 focus-visible:outline-navy-600 disabled:opacity-40"
+                    >
+                      <X size={18} aria-hidden />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <ul className="mt-6 flex flex-wrap justify-center gap-3">
+              {BADGES.map(({ icon: Icon, label }) => (
+                <li key={label} className="metallic-bg flex items-center gap-2 rounded-full border border-steel-400 px-4 py-2 text-sm font-semibold text-navy-900 shadow-sm">
+                  <Icon size={16} aria-hidden />
+                  {label}
+                </li>
+              ))}
+            </ul>
+
+            <div className="mt-6 border-t border-steel-200 pt-5">
+              <AdvancedSettings settings={settings} onChange={setSettings} disabled={busy} />
+            </div>
+
+            {errors.length > 0 && (
+              <div role="alert" className="mt-5 rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-900">
+                {errors.map((message) => (
+                  <p key={message} dir="auto">{message}</p>
+                ))}
+              </div>
+            )}
+
+            {busy ? (
+              <div className="mt-6" role="status" aria-live="polite">
+                <div className="mb-2 flex justify-between text-sm font-semibold text-navy-900">
+                  <span dir="auto">{progress.message}</span>
+                  <span>{Math.round(progress.percent)}%</span>
+                </div>
+                <div className="h-3 overflow-hidden rounded-full bg-steel-200" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress.percent)}>
+                  <div className="h-full rounded-full bg-linear-to-r from-navy-800 to-navy-500 transition-all duration-500" style={{ width: `${progress.percent}%` }} />
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={!files.length}
+                onClick={start}
+                className="mt-6 w-full rounded-xl bg-navy-800 px-6 py-4 text-lg font-bold text-white shadow-lg transition hover:bg-navy-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy-600 disabled:cursor-not-allowed disabled:bg-steel-300 disabled:text-steel-500 disabled:shadow-none"
+              >
+                {files.length ? `Process ${files.length} ${files.length === 1 ? 'file' : 'files'}` : 'Add a file to begin'}
+              </button>
+            )}
+          </section>
+        )}
+
+        {phase === 'done' && result && (
+          <section aria-label="Results" className="rounded-3xl border border-steel-300 bg-white p-5 shadow-2xl shadow-black/40 sm:p-8">
+            <h2 className="text-2xl font-extrabold text-navy-900">Your file is ready</h2>
+            <dl className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[['Files', result.fileCount], ['Words', result.words], ['Characters', result.chars], ['Lines', result.lines]].map(([label, value]) => (
+                <div key={label} className="metallic-bg flex flex-col-reverse rounded-xl border border-steel-300 p-4 text-center">
+                  <dt className="text-xs font-semibold uppercase tracking-wider text-steel-600">{label}</dt>
+                  <dd className="text-2xl font-black text-navy-900">{Number(value).toLocaleString('en-US')}</dd>
+                </div>
+              ))}
+            </dl>
+
+            <pre dir="auto" className="mt-5 max-h-56 overflow-auto whitespace-pre-wrap rounded-xl border border-steel-200 bg-steel-100 p-4 text-sm text-navy-900">
+              {result.text.slice(0, 1500)}{result.text.length > 1500 ? '\n…' : ''}
+            </pre>
+
+            {[...result.warnings, ...errors].length > 0 && (
+              <div role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+                {[...result.warnings, ...errors].map((message) => (
+                  <p key={message} dir="auto">{message}</p>
+                ))}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={download}
+              className="mt-6 flex w-full items-center justify-center gap-3 rounded-xl bg-navy-800 px-6 py-5 text-xl font-extrabold text-white shadow-lg transition hover:bg-navy-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy-600"
+            >
+              <Download size={24} aria-hidden />
+              Download Processed File
+            </button>
+            {settings.format === 'pdf' && <p className="mt-2 text-center text-sm text-steel-600">Choose “Save as PDF” in the print dialog that opens.</p>}
+            <button type="button" onClick={reset} className="mx-auto mt-4 flex items-center gap-2 font-semibold text-navy-700 hover:text-navy-500 focus-visible:outline-2 focus-visible:outline-navy-600">
+              <Undo2 size={16} aria-hidden /> Process another file
+            </button>
+          </section>
+        )}
+      </main>
+
+      <footer className="metallic-bg border-t border-steel-400 py-5 text-center text-sm text-navy-900">
+        Powered by <strong className="font-extrabold">Disha Pro Studio</strong>
+      </footer>
+    </div>
+  );
 }

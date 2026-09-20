@@ -23,45 +23,74 @@ function detectExtension(file: File, data: ArrayBuffer): string {
   return looksLikePdf ? 'pdf' : declared;
 }
 
+export type ReadOptions = {
+  encoding: string;
+  ocr: boolean;
+  update: ProgressFn;
+  /** Remaining OCR page budget for this Process run; ignored when OCR is off. */
+  ocrPagesRemaining?: number;
+};
+
+export type ReadResult = {
+  text: string;
+  /** Pages consumed from the OCR budget (0 when OCR was off or unused). */
+  ocrPagesUsed: number;
+};
+
 /** Reads any supported file into plain text. Throws UserError with an Arabic message on failure. */
-export async function readDocument(file: File, encoding: string, ocr: boolean, update: ProgressFn): Promise<string> {
+export async function readDocument(file: File, options: ReadOptions): Promise<ReadResult> {
   if (file.size > LIMITS.fileBytes) throw new UserError('حجم الملف يتجاوز 20 MB.');
 
   const data = await file.arrayBuffer();
   const extension = detectExtension(file, data);
+  const { encoding, ocr, update, ocrPagesRemaining } = options;
 
-  const text = await readByExtension(file, data, extension, encoding, ocr, update);
+  const { text, ocrPagesUsed } = await readByExtension(
+    file,
+    data,
+    extension,
+    encoding,
+    ocr,
+    update,
+    ocrPagesRemaining,
+  );
 
   if (text.length > LIMITS.chars) throw new UserError('المحتوى أكبر من مليوني حرف.');
   if (!text.trim()) throw new UserError('لم يتم العثور على نص.');
-  return text;
+  return { text, ocrPagesUsed };
 }
 
-function readByExtension(
+async function readByExtension(
   file: File,
   data: ArrayBuffer,
   extension: string,
   encoding: string,
   ocr: boolean,
   update: ProgressFn,
-): Promise<string> | string {
+  ocrPagesRemaining: number | undefined,
+): Promise<ReadResult> {
   if (IMAGE_EXTENSIONS.includes(extension)) {
     if (!ocr) throw new UserError('فعّل OCR لقراءة الصور.');
-    return recognizeText(file, update);
+    if (ocrPagesRemaining !== undefined && ocrPagesRemaining < 1) {
+      throw new UserError(`تم بلوغ حد OCR لهذه الدفعة (${LIMITS.ocrBatchPages} صفحة). عطّل OCR أو قلّل الملفات.`);
+    }
+    return { text: await recognizeText(file, update), ocrPagesUsed: 1 };
   }
   switch (extension) {
-    case 'pdf':
-      return readPdf(data, ocr, update);
+    case 'pdf': {
+      const result = await readPdf(data, ocr, update, ocrPagesRemaining);
+      return result;
+    }
     case 'docx':
-      return readDocx(data);
+      return { text: await readDocx(data), ocrPagesUsed: 0 };
     case 'xlsx':
     case 'xls':
-      return readSpreadsheet(data);
+      return { text: await readSpreadsheet(data), ocrPagesUsed: 0 };
     case 'pptx':
     case 'odt':
     case 'epub':
-      return readArchive(data, extension);
+      return { text: await readArchive(data, extension), ocrPagesUsed: 0 };
     default:
-      return readPlainText(data, extension, encoding);
+      return { text: readPlainText(data, extension, encoding), ocrPagesUsed: 0 };
   }
 }
