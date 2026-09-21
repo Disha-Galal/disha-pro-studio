@@ -1,4 +1,4 @@
-# تشغيل وإدارة Disha Pro Studio
+# تشغيل وإدارة ParseFlow (منتج Disha Pro Studio)
 
 ## أسهل طريقة للإدارة
 

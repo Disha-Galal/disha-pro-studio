@@ -1,70 +1,37 @@
-# ParseFlow (Disha Pro Studio)
+# ParseFlow — a Disha Pro Studio product
 
-Browser-first document processing: PDF · DOCX · TXT → cleaned, structured output. No uploads — everything runs in your tab.
+نسخة ويب ثنائية اللغة (عربي أولًا، وإنجليزي كامل) مبنية على وظائف معالجة النصوص في سكريبت Disha Galal، ومدمجة هنا مع واجهة ParseFlow الاحترافية (الاسم، الشعار، وهوية الألوان الفولاذية/السماوية الداكنة). السكريبت الأصلي محفوظ دون تعديل داخل `reference/`. هذه إعادة تنفيذ للوظائف المناسبة للمتصفح، وليست تشغيل Python على الخادم.
 
-**Private repo:** https://github.com/Disha-Galal/disha-pro-studio
+**ParseFlow is a bilingual (Arabic-first, full English) browser-based document & text studio.** It merges the full feature set of Disha Pro Studio (OCR, encoding tools, cleanup, Arabic-aware search & replace, diff/compare, AES-GCM encryption, session save/restore, and reading/writing 20+ file formats including code & config files) with the ParseFlow product identity — name, logo, and the dark navy/cyan/steel brand palette. Toggle the language from the header at any time; the whole layout mirrors between RTL and LTR.
 
-## Requirements
+## المتاح
+- نصوص UTF-8 / Windows-1256 / UTF-16 LE / ISO-8859-6، واستخراج HTML كنص دون تشغيله.
+- PDF نصي (حتى 200 صفحة)، DOCX، XLS/XLSX، PPTX، ODT، EPUB.
+- OCR محلي للعربية والإنجليزية لصور PNG/JPG/WebP وجميع صفحات PDF، بتفعيل المستخدم. حتى 20 صفحة.
+- تنظيف، حذف تكرار مع الاحتفاظ بترتيب أول ظهور، فرز، إزالة تشكيل، بحث واستبدال حرفي، استخراج روابط وإيميلات وأرقام هاتف محتملة.
+- مقارنة سطور وإحصاءات، تراجع عن آخر 10 عمليات، دمج الملفات.
+- تنزيل TXT/MD/HTML/JSON/CSV/DOCX؛ PDF عبر نافذة الطباعة.
+- تشفير AES-256-GCM مع PBKDF2 SHA-256 600000 دورة وملح عشوائي وIV عشوائي. تنسيق DPRO1 مختلف عن TPPF1 القديم. كلمة السر لا تغادر المتصفح.
 
-| Tool | Version |
-|------|---------|
-| Node.js | **22.13+** |
-| pnpm | **11.25.0** (see `packageManager` in `package.json`) |
+## حدود واضحة
+المعالجة محلية ولا يتم رفع المستندات إلى خادم التطبيق. OCR يحتاج تنزيل مكتبات ونماذج لغة من مصادرها العامة، ولا يرسل الصور إليها. المحتوى غير محفوظ بعد إغلاق الصفحة. حجم الملف الأقصى 20 MB، النص مليونا حرف. التحويل استخراج للمحتوى وليس نسخة مطابقة للتنسيق. ملفات DOC/PPT القديمة والصوت والفيديو والمستندات المحمية بكلمة سر غير مدعومة حاليًا. راجع نتائج OCR وPDF متعددة الأعمدة يدويًا.
 
-## Local run (Next.js static export)
+## قرارات مراجعة خطة Gemini
+احتفظنا بفصل الواجهة عن المعالجة وبمعاينة النتائج. استبعدنا تجاهل أخطاء الترميز، استخدام اسم رفع المستخدم كمسار خادم، وأدوات تنظيف نظام الخادم. الويب يحتاج عزلًا عن نظام الملفات وليس نقل واجهة الطرفية كما هي. Streamlit بديل صالح لاستضافة Python منفصلة؛ الإصدار المنشور هنا متصفح أولًا لخفض نقل الملفات.
 
-```bash
-git clone https://github.com/Disha-Galal/disha-pro-studio.git
-cd disha-pro-studio
-corepack enable && corepack prepare pnpm@11.25.0 --activate
-pnpm install --frozen-lockfile
-pnpm run dev          # http://localhost:3000
-```
+## خطة الإصدار التالي
+1. اختبارات عربية موسعة على PDF متعدد الأعمدة، الجداول، والصور منخفضة الجودة.
+2. إضافة قراءة TPPF1 متوافقة مع السكريبت مع حدود صارمة لمعاملات KDF؛ لا تحويل صامت لصيغ التشفير.
+3. خدمة Python مستقلة للتحويل الذي يحافظ على التنسيق، بمهام معزولة ومجلدات مؤقتة عشوائية وحذف مضمون وحدود حجم ووقت ومعدل.
+4. تفريغ الصوت والفيديو بعد تحديد مزود التكلفة والخصوصية، بموافقة صريحة قبل إرسال الوسائط.
+5. تقسيم PDF ودمجه واستخراج صفحات مع اختبارات الملفات العربية والتوقيعات.
+6. تحسين الملفات الكبيرة: Web Workers، إلغاء العمليات، تقدم لكل ملف، وإتاحة حفظ جلسة اختياري صريح.
 
-Production build (writes `out/`):
+لا تشمل هذه النسخة دفعًا أو اشتراكات أو ربط حسابات AI. وظائف إدارة الجهاز ونسخه الاحتياطية تظل في سكريبت Ubuntu.
 
-```bash
-pnpm run build
-pnpm start            # serves ./out via `serve`
-```
-
-Checks:
-
-```bash
-pnpm exec tsc --noEmit
-pnpm run lint
-pnpm run build
-```
-
-## ChatGPT Sites
-
-This tree builds as a **static Next export** (`output: 'export'`). Redeploying the ChatGPT Site still needs a separate **@Sites** publish from your ChatGPT / Sites workflow — pushing to GitHub alone does not update the Sites URL.
-
-`.openai/hosting.json` `project_id` is preserved for Sites tooling.
-
-## Termux + Ubuntu (proot)
-
-```bash
-# inside proot Ubuntu
-apt update && apt install -y curl ca-certificates git build-essential
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-apt install -y nodejs
-corepack enable && corepack prepare pnpm@11.25.0 --activate
-git clone https://github.com/Disha-Galal/disha-pro-studio.git
-cd disha-pro-studio
-pnpm install --frozen-lockfile
-pnpm run dev
-```
-
-Open the printed `localhost` URL from the phone browser. OCR and large PDFs are heavy on mobile RAM — prefer a desktop for big batches.
-
-## Limits (crash / hang guards)
-
-- Max **20 MB** per file, **10** files per run, **2M** characters merged.
-- PDF text extract: **200** pages/file.
-- OCR: **20** pages/file, **40** pages/batch; canvas pixel cap; worker released after each run.
-- DOCX export capped at **50 000** paragraphs (choose TXT for huge text).
-
-## Deploy
-
-Static `out/` works on Vercel, Netlify, Cloudflare Pages, GitHub Pages. See `DEPLOY_AR.md`. The Pages workflow uses **pnpm** (not npm).
+## الإصدار 02
+- واجهة كحلية داكنة مع تباين أعلى، مؤشرات تركيز واضحة، وإظهار قائمة الملفات على الهاتف.
+- حفظ جلسة اختياري في ملف JSON محلي (النص وإعدادات التصدير فقط)، واسترجاع مضبوط بالحجم والمخطط. ملفات الجلسة غير مشفرة، ولا حفظ تلقائي.
+- فك TPPF1 المتوافق مع Python Fernet: تحقق HMAC قبل AES-CBC، وحدود PBKDF2 من 10000 إلى 2000000 دورة. التشفير الجديد يظل DPRO1.
+- تحقق التوافق باستخدام ملف صادر من Python cryptography، مع رفض كلمة السر الخطأ والتلاعب ومعاملات KDF المفرطة.
+- بقية الخطة: تحسين PDF العربي والجداول، مهام كبيرة قابلة للإلغاء، ثم خدمة تحويل وتفريغ صوت منفصلة عند تحديد متطلبات التشغيل.

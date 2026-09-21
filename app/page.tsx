@@ -1,211 +1,649 @@
 'use client';
 
-import { useRef, useState } from 'react';
-import { Download, FileText, LockKeyhole, ShieldCheck, Undo2, X, Zap } from 'lucide-react';
-import { AdvancedSettings } from '@/components/parseflow/advanced-settings';
-import { Dropzone } from '@/components/parseflow/dropzone';
-import { DEFAULT_SETTINGS, processFiles, type ProcessResult, type Settings } from '@/lib/parseflow';
-import { exportDocument } from '@/lib/processor';
-import { MAX_FILES } from '@/lib/validate';
+import type { Change } from 'diff';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Braces,
+  Check,
+  Copy,
+  Download,
+  Files,
+  FileText,
+  LockKeyhole,
+  Scissors,
+  Search,
+  ShieldCheck,
+  Undo2,
+  Upload,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { LANG_STORAGE_KEY, type Lang, t } from '@/lib/i18n';
+import {
+  cryptFile,
+  type FindOpts,
+  findCount,
+  readDocument,
+  exportDocument,
+  releaseOcr,
+  replaceInText,
+  statistics,
+  takeNotes,
+  transform,
+} from '@/lib/processor';
 
-type Phase = 'idle' | 'processing' | 'done';
+type Item = { name: string; text: string };
 
-const fileKey = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
-const formatSize = (bytes: number) => (bytes < 1_048_576 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1_048_576).toFixed(1)} MB`);
+const NUM_LOCALE: Record<Lang, string> = { ar: 'ar-EG', en: 'en-US' };
 
-const BADGES = [
-  { icon: ShieldCheck, label: 'Enterprise-Grade Security' },
-  { icon: LockKeyhole, label: 'Files Never Leave Your Browser' },
-  { icon: Zap, label: 'PDF · DOCX · TXT' },
-];
+/** Simple globe glyph for the language switch — kept as inline SVG to avoid depending on a specific icon-set version. */
+function LangIcon() {
+  return (
+    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3c2.5 2.6 3.8 5.7 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.7-3.8-9S9.5 5.6 12 3Z" />
+    </svg>
+  );
+}
+
+/** ParseFlow brand mark: hexagon shell + three-way flow arrow, echoing the Disha Pro Studio logo. */
+function BrandMark({ size = 26 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden>
+      <defs>
+        <linearGradient id="pf-hex-g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#16324a" />
+          <stop offset="1" stopColor="#06111f" />
+        </linearGradient>
+        <linearGradient id="pf-arrow-g" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor="#2f6fe4" />
+          <stop offset="0.55" stopColor="#8fd9ec" />
+          <stop offset="1" stopColor="#22d3ee" />
+        </linearGradient>
+      </defs>
+      <path d="M32 2 58 17v30L32 62 6 47V17Z" fill="url(#pf-hex-g)" stroke="#22d3ee" strokeWidth="1.6" />
+      <g fill="none" stroke="url(#pf-arrow-g)" strokeWidth="3.4" strokeLinecap="round">
+        <path d="M15 24c4 0 6 2 9 5s5 3 8 3" />
+        <path d="M15 32h17" />
+        <path d="M15 40c4 0 6-2 9-5s5-3 8-3" />
+      </g>
+      <path d="M31 24l9 8-9 8" fill="none" stroke="url(#pf-arrow-g)" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="15" cy="24" r="2.6" fill="#2f6fe4" />
+      <circle cx="15" cy="32" r="2.6" fill="#c9d6e4" />
+      <circle cx="15" cy="40" r="2.6" fill="#2f6fe4" />
+    </svg>
+  );
+}
 
 export default function Home() {
-  const [phase, setPhase] = useState<Phase>('idle');
-  const [files, setFiles] = useState<File[]>([]);
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [progress, setProgress] = useState({ percent: 0, message: '' });
-  const [result, setResult] = useState<ProcessResult | null>(null);
-  const [errors, setErrors] = useState<string[]>([]);
-  const startingRef = useRef(false);
+  const [lang, setLang] = useState<Lang>('ar');
+  const L = (key: Parameters<typeof t>[1]) => t(lang, key);
+  const dir = lang === 'ar' ? 'rtl' : 'ltr';
 
-  function addFiles(incoming: File[]) {
-    const known = new Set(files.map(fileKey));
-    const merged = [...files, ...incoming.filter((f) => !known.has(fileKey(f)))];
-    setFiles(merged.slice(0, MAX_FILES));
-    if (merged.length > MAX_FILES) setErrors((old) => [...old, `Only ${MAX_FILES} files can be processed at a time.`]);
+  useEffect(() => {
+    const saved = typeof window !== 'undefined' ? window.localStorage.getItem(LANG_STORAGE_KEY) : null;
+    if (saved === 'ar' || saved === 'en') setLang(saved);
+  }, []);
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    document.documentElement.dir = dir;
+    try {
+      window.localStorage.setItem(LANG_STORAGE_KEY, lang);
+    } catch {
+      /* private browsing / storage disabled — language just won't persist */
+    }
+  }, [lang, dir]);
+
+  const [text, setText] = useState(''),
+    [history, setHistory] = useState<string[]>([]),
+    [files, setFiles] = useState<Item[]>([]),
+    [busy, setBusy] = useState(false),
+    [message, setMessage] = useState(''),
+    [encoding, setEncoding] = useState('utf-8'),
+    [format, setFormat] = useState('txt'),
+    [name, setName] = useState('parseflow-document'),
+    [find, setFind] = useState(''),
+    [replacement, setReplacement] = useState(''),
+    [findOpts, setFindOpts] = useState<FindOpts>({ regex: false, caseSensitive: false, arabic: true }),
+    [other, setOther] = useState(''),
+    [ocr, setOcr] = useState(false),
+    [password, setPassword] = useState(''),
+    [cryptoFile, setCryptoFile] = useState<File | null>(null),
+    [diff, setDiff] = useState<Change[]>([]),
+    [similarReport, setSimilarReport] = useState('');
+  const picker = useRef<HTMLInputElement>(null);
+  const sessionPicker = useRef<HTMLInputElement>(null);
+  const stats = useMemo(() => statistics(text), [text]);
+  const matchCount = useMemo(() => (find ? findCount(text, find, findOpts) : 0), [text, find, findOpts]);
+
+  function change(newText: string) {
+    if (newText.length > 2_000_000) {
+      setMessage(L('errFileTooLarge'));
+      return;
+    }
+    setHistory((h) => [...h.slice(-9), text]);
+    setText(newText);
   }
 
-  async function start() {
-    if (startingRef.current || !files.length) return;
-    startingRef.current = true;
-    setErrors([]);
-    setProgress({ percent: 0, message: 'Starting…' });
-    setPhase('processing');
+  async function load(list: FileList | null) {
+    if (!list) return;
+    setBusy(true);
+    setMessage(L('loadingFiles'));
+    const result: Item[] = [];
+    const errors: string[] = [];
+    takeNotes();
     try {
-      setResult(await processFiles(files, settings, (percent, message) => setProgress({ percent, message })));
-      setPhase('done');
-    } catch (error) {
-      setErrors([error instanceof Error ? error.message : 'Processing failed. Please try again.']);
-      setPhase('idle');
+      for (const f of Array.from(list).slice(0, 10)) {
+        try {
+          const fileText = await readDocument(f, encoding, ocr, setMessage);
+          result.push({ name: f.name, text: fileText });
+        } catch (e) {
+          errors.push(f.name + ': ' + (e as Error).message);
+        }
+      }
+      setFiles((old) => [...old, ...result].slice(-20));
+      if (result.length) {
+        change([text, ...result.map((x) => x.text)].filter(Boolean).join('\n\n'));
+        setName(result[0].name.replace(/\.[^.]+$/, ''));
+      }
+      setMessage(
+        [
+          result.length ? `${L('filesReadMsg')}: ${result.length} • ${L('reviewMsg')}` : '',
+          ...errors,
+          ...takeNotes(),
+          list.length > 10 ? L('errMaxFiles') : '',
+        ]
+          .filter(Boolean)
+          .join(' • '),
+      );
     } finally {
-      startingRef.current = false;
+      try {
+        await releaseOcr();
+      } catch {
+        setMessage((m) => m + ' • ' + L('ocrCloseFail'));
+      }
+      setBusy(false);
+      if (picker.current) picker.current.value = '';
     }
   }
 
-  async function download() {
-    if (!result) return;
-    const baseName = files[0]?.name.replace(/\.[^.]+$/, '') ?? 'parseflow';
+  async function runExport() {
+    setBusy(true);
     try {
-      await exportDocument(result.text, settings.format, settings.fileName.trim() || `${baseName}-processed`);
-    } catch (error) {
-      setErrors([error instanceof Error ? error.message : 'Download failed.']);
+      await exportDocument(text, format, name);
+      setMessage(format === 'pdf' ? L('pdfHint') : L('exportReady'));
+    } catch (e) {
+      setMessage((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
-  function reset() {
-    setFiles([]);
-    setResult(null);
-    setErrors([]);
-    setPhase('idle');
+  async function cryptoAction(mode: boolean) {
+    if (!cryptoFile) return;
+    setBusy(true);
+    try {
+      await cryptFile(cryptoFile, password, mode);
+      setMessage(L('cryptoDone'));
+      setPassword('');
+    } catch {
+      setMessage(L('cryptoFail'));
+    } finally {
+      setBusy(false);
+    }
   }
 
-  const busy = phase === 'processing';
+  function saveSession() {
+    const blob = new Blob(
+      [JSON.stringify({ app: 'parseflow-session', version: 1, text, name, format, encoding }, null, 2)],
+      { type: 'application/json' },
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'parseflow-session.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    setMessage(L('sessionSaved'));
+  }
+
+  async function restoreSession(file: File | undefined) {
+    if (!file) return;
+    try {
+      if (file.size > 10 * 1024 * 1024) throw Error();
+      const d = JSON.parse(await file.text());
+      if (
+        (d.app !== 'parseflow-session' && d.app !== 'disha-pro-session') ||
+        d.version !== 1 ||
+        typeof d.text !== 'string' ||
+        d.text.length > 2_000_000 ||
+        typeof d.name !== 'string' ||
+        d.name.length > 200 ||
+        !['txt', 'pdf', 'docx', 'md', 'html', 'json', 'csv'].includes(d.format) ||
+        !['utf-8', 'windows-1256', 'utf-16le', 'iso-8859-6'].includes(d.encoding)
+      )
+        throw Error();
+      change(d.text);
+      setName(d.name);
+      setFormat(d.format);
+      setEncoding(d.encoding);
+      setMessage(L('sessionRestored'));
+    } catch {
+      setMessage(L('sessionInvalid'));
+    } finally {
+      if (sessionPicker.current) sessionPicker.current.value = '';
+    }
+  }
+
+  function runReplaceAll() {
+    const { text: next, count } = replaceInText(text, find, replacement, findOpts);
+    if (count > 0) change(next);
+    setMessage(`${count} ${L('matchesWord')}`);
+  }
+
+  function runSimilar() {
+    setSimilarReport(transform(text, 'similar'));
+  }
+
+  const CLEAN_TOOLS: [string, string][] = [
+    ['clean', L('toolClean')],
+    ['empty', L('toolEmpty')],
+    ['dedupe', L('toolDedupe')],
+    ['dedupe-smart', L('toolDedupeSmart')],
+    ['sort', L('toolSort')],
+    ['reverse', L('toolReverse')],
+    ['presentation', L('toolPresentation')],
+    ['arabic', L('toolArabic')],
+    ['unify', L('toolUnify')],
+    ['digits-en', L('toolDigitsEn')],
+    ['digits-ar', L('toolDigitsAr')],
+    ['upper', L('toolUpper')],
+    ['lower', L('toolLower')],
+  ];
+  const EXTRACT_TOOLS: [string, string][] = [
+    ['links', L('extractLinks')],
+    ['emails', L('extractEmails')],
+    ['phones', L('extractPhones')],
+  ];
+
+  const busyDisabled = busy;
 
   return (
-    <div className="flex min-h-screen flex-col bg-linear-to-b from-navy-950 via-navy-900 to-navy-800 font-sans" dir="ltr">
-      <header className="mx-auto flex w-full max-w-5xl items-center gap-3 px-5 py-6">
-        <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden>
-          <rect width="40" height="40" rx="10" fill="#0f2a5a" stroke="#c5cdd9" strokeWidth="1.5" />
-          <path d="M9 14h14M9 20h22M9 26h14" stroke="#e4e9f0" strokeWidth="3" strokeLinecap="round" />
-          <circle cx="30" cy="14" r="3" fill="#9aa5b5" />
-        </svg>
-        <div className="leading-tight">
-          <p className="text-xl font-extrabold tracking-wide text-white">ParseFlow</p>
-          <p className="text-xs text-steel-300">by Disha Pro Studio</p>
+    <div dir={dir}>
+      <header>
+        <a className="brand" href="/">
+          <span className="brand-icon">
+            <BrandMark />
+          </span>
+          <span>
+            <span className="brand-name">
+              {lang === 'ar' ? 'بارس' : 'Parse'}
+              <b>{lang === 'ar' ? 'فلو' : 'Flow'}</b>
+            </span>
+            <small>{L('brandTagline')} · {L('brandParent')}</small>
+          </span>
+        </a>
+        <div className="private">
+          <ShieldCheck size={17} /> {L('privacyBadge')}
         </div>
+        <button type="button" className="lang-toggle" onClick={() => setLang(lang === 'ar' ? 'en' : 'ar')}>
+          <LangIcon /> {L('langSwitch')}
+        </button>
+        <span className="version">{L('version')}</span>
       </header>
 
-      <main className="mx-auto w-full max-w-5xl flex-1 px-5 pb-16">
-        <section className="py-10 text-center sm:py-14">
-          <h1 className="text-4xl font-black uppercase leading-tight tracking-tight text-white sm:text-5xl lg:text-6xl">
-            Process thousands of rows <span className="metallic-text">in seconds</span>
-          </h1>
-          <p className="mx-auto mt-5 max-w-2xl text-lg text-steel-300">
-            Upload your documents, clean and structure the text, and download a processed file — all in one flow.
-          </p>
-        </section>
+      <main>
+        <div className="heading">
+          <div>
+            <div className="eyebrow">{L('eyebrow')}</div>
+            <h1>
+              {L('heroTitle1')} <span>{L('heroTitle2')}</span>
+            </h1>
+            <p>{L('heroSubtitle')}</p>
+          </div>
+          <div className="signature" dir="ltr">
+            {L('signatureBuiltBy')}
+            <br />
+            <strong>{L('signatureName')}</strong>
+          </div>
+        </div>
 
-        {phase !== 'done' && (
-          <section aria-label="Upload" className="rounded-3xl border border-steel-300 bg-white p-5 shadow-2xl shadow-black/40 sm:p-8">
-            <Dropzone disabled={busy} onAccepted={addFiles} onRejected={(reasons) => setErrors(reasons)} />
+        <div className="workspace">
+          <aside>
+            <section className="panel import-panel">
+              <div className="section-label">
+                <span>01</span> {L('step1')}
+              </div>
+              <div
+                className="drop"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (!busyDisabled) load(e.dataTransfer.files);
+                }}
+              >
+                <span className="upload-icon">
+                  <Upload size={28} />
+                </span>
+                <h2>{L('dropTitle')}</h2>
+                <p>{L('dropSubtitle')}</p>
+                <Button disabled={busyDisabled} onClick={() => picker.current?.click()}>
+                  {L('chooseFiles')} <Upload size={16} />
+                </Button>
+                <input ref={picker} type="file" multiple hidden onChange={(e) => load(e.target.files)} />
+                <small>{L('dropHint')}</small>
+              </div>
+              <div className="formats">{L('formatsList')}</div>
+              <label className="field">
+                {L('encodingLabel')}
+                <select value={encoding} onChange={(e) => setEncoding(e.target.value)}>
+                  <option value="utf-8">{L('encodingUtf8')}</option>
+                  <option value="windows-1256">{L('encodingWin1256')}</option>
+                  <option value="utf-16le">{L('encodingUtf16')}</option>
+                  <option value="iso-8859-6">{L('encodingIso')}</option>
+                </select>
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={ocr} onChange={(e) => setOcr(e.target.checked)} /> {L('ocrLabel')}
+              </label>
+              <p className="hint">{L('ocrHint')}</p>
+            </section>
 
-            {files.length > 0 && (
-              <ul className="mt-5 divide-y divide-steel-200 rounded-xl border border-steel-200">
-                {files.map((file) => (
-                  <li key={fileKey(file)} className="flex items-center gap-3 px-4 py-3">
-                    <FileText size={20} className="shrink-0 text-navy-700" aria-hidden />
-                    <span className="min-w-0 flex-1 truncate text-navy-900" dir="auto">{file.name}</span>
-                    <span className="text-sm text-steel-500">{formatSize(file.size)}</span>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      aria-label={`Remove ${file.name}`}
-                      onClick={() => setFiles(files.filter((f) => f !== file))}
-                      className="rounded p-1 text-steel-500 hover:text-navy-900 focus-visible:outline-2 focus-visible:outline-navy-600 disabled:opacity-40"
-                    >
-                      <X size={18} aria-hidden />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <section className="panel queue">
+              <h3>
+                <Files size={17} /> {L('queueTitle')} <span>{files.length}</span>
+              </h3>
+              {files.length ? (
+                files.map((f, i) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      change(f.text);
+                      setName(f.name.replace(/\.[^.]+$/, ''));
+                    }}
+                    className="file-row"
+                    disabled={busyDisabled}
+                  >
+                    <FileText size={18} />
+                    <span dir="auto">{f.name}</span>
+                    <Check size={14} />
+                  </button>
+                ))
+              ) : (
+                <p className="hint">{L('queueEmpty')}</p>
+              )}
+              <p className="hint">{L('queueHint')}</p>
+            </section>
+          </aside>
 
-            <ul className="mt-6 flex flex-wrap justify-center gap-3">
-              {BADGES.map(({ icon: Icon, label }) => (
-                <li key={label} className="metallic-bg flex items-center gap-2 rounded-full border border-steel-400 px-4 py-2 text-sm font-semibold text-navy-900 shadow-sm">
-                  <Icon size={16} aria-hidden />
-                  {label}
-                </li>
-              ))}
-            </ul>
+          <div className="work-main">
+            <section className="panel editor-panel">
+              <div className="editor-title">
+                <div className="section-label">
+                  <span>02</span> {L('step2')}
+                </div>
+                <div className="editor-actions">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={!history.length || busyDisabled}
+                    onClick={() => {
+                      setText(history.at(-1)!);
+                      setHistory((h) => h.slice(0, -1));
+                    }}
+                  >
+                    <Undo2 size={16} /> {L('undo')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={!text}
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(text);
+                        setMessage(L('copied'));
+                      } catch {
+                        setMessage(L('copyFailed'));
+                      }
+                    }}
+                  >
+                    <Copy size={16} /> {L('copy')}
+                  </Button>
+                </div>
+              </div>
+              <Textarea
+                aria-label={L('step2')}
+                dir="auto"
+                value={text}
+                disabled={busyDisabled}
+                onChange={(e) => setText(e.target.value.slice(0, 2_000_000))}
+                placeholder={L('editorPlaceholder')}
+                className="editor"
+              />
+              <div className="stats">
+                <span>
+                  <b>{stats.words.toLocaleString(NUM_LOCALE[lang])}</b> {L('statWords')}
+                </span>
+                <span>
+                  <b>{stats.chars.toLocaleString(NUM_LOCALE[lang])}</b> {L('statChars')}
+                </span>
+                <span>
+                  <b>{stats.lines.toLocaleString(NUM_LOCALE[lang])}</b> {L('statLines')}
+                </span>
+                <span>
+                  {L('statReading')} {stats.minutes} {L('statMinutes')}
+                </span>
+              </div>
+            </section>
 
-            <div className="mt-6 border-t border-steel-200 pt-5">
-              <AdvancedSettings settings={settings} onChange={setSettings} disabled={busy} />
+            <div role="status" aria-live="polite" className={'status ' + (busyDisabled ? 'working' : '')}>
+              {busyDisabled ? <span className="spinner" /> : <ShieldCheck size={16} />} {message || L('readyStatus')}
             </div>
 
-            {errors.length > 0 && (
-              <div role="alert" className="mt-5 rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-900">
-                {errors.map((message) => (
-                  <p key={message} dir="auto">{message}</p>
-                ))}
+            <section className="panel toolbox">
+              <Tabs defaultValue="clean" dir={dir}>
+                <TabsList className="tool-tabs">
+                  <TabsTrigger value="clean">
+                    <Scissors size={16} /> {L('tabClean')}
+                  </TabsTrigger>
+                  <TabsTrigger value="search">
+                    <Search size={16} /> {L('tabSearch')}
+                  </TabsTrigger>
+                  <TabsTrigger value="analysis">
+                    <Braces size={16} /> {L('tabAnalysis')}
+                  </TabsTrigger>
+                  <TabsTrigger value="secure">
+                    <LockKeyhole size={16} /> {L('tabSecure')}
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="clean">
+                  <h3>{L('cleanTitle')}</h3>
+                  <div className="tools">
+                    {CLEAN_TOOLS.map(([id, label]) => (
+                      <Button
+                        variant="outline"
+                        key={id}
+                        disabled={!text || busyDisabled}
+                        onClick={() => {
+                          change(transform(text, id));
+                          setMessage(L('modifiedMsg'));
+                        }}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="search">
+                  <div className="search-grid">
+                    <label>
+                      {L('findLabel')}
+                      <Input value={find} onChange={(e) => setFind(e.target.value)} dir="auto" />
+                    </label>
+                    <label>
+                      {L('replaceLabel')}
+                      <Input value={replacement} onChange={(e) => setReplacement(e.target.value)} dir="auto" />
+                    </label>
+                    <Button disabled={!find || busyDisabled} onClick={runReplaceAll}>
+                      {L('replaceAll')}
+                    </Button>
+                  </div>
+                  <div className="find-options">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={findOpts.arabic}
+                        onChange={(e) => setFindOpts((o) => ({ ...o, arabic: e.target.checked }))}
+                      />
+                      {L('arabicOption')}
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={findOpts.caseSensitive}
+                        onChange={(e) => setFindOpts((o) => ({ ...o, caseSensitive: e.target.checked }))}
+                      />
+                      {L('caseOption')}
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={findOpts.regex}
+                        onChange={(e) => setFindOpts((o) => ({ ...o, regex: e.target.checked }))}
+                      />
+                      {L('regexOption')}
+                    </label>
+                  </div>
+                  <p className="hint">
+                    {find ? Math.max(matchCount, 0) : 0} {L('matchesWord')}
+                  </p>
+                  <div className="tools">
+                    {EXTRACT_TOOLS.map(([id, label]) => (
+                      <Button variant="outline" key={id} disabled={!text || busyDisabled} onClick={() => change(transform(text, id))}>
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="analysis">
+                  <h3>{L('topWords')}</h3>
+                  <div className="word-list">
+                    {stats.top.length ? (
+                      stats.top.map(([w, n]) => (
+                        <span key={w}>
+                          {w} <b>{n}</b>
+                        </span>
+                      ))
+                    ) : (
+                      <p className="hint">{L('topWordsEmpty')}</p>
+                    )}
+                  </div>
+                  <div className="tools">
+                    <Button variant="outline" disabled={!text || busyDisabled} onClick={runSimilar}>
+                      {L('similarBtn')}
+                    </Button>
+                  </div>
+                  {similarReport && <pre className="similar-report" dir="auto">{similarReport}</pre>}
+                  <label>
+                    {L('compareLabel')}
+                    <Textarea value={other} onChange={(e) => setOther(e.target.value.slice(0, 100_000))} dir="auto" />
+                  </label>
+                  <Button
+                    variant="outline"
+                    disabled={busyDisabled || text.length > 100_000}
+                    onClick={async () => {
+                      const { diffLines } = await import('diff');
+                      setDiff(diffLines(text, other, { timeout: 1500 }) || []);
+                    }}
+                  >
+                    {L('compareBtn')}
+                  </Button>
+                  <div className="diff" dir="auto">
+                    {diff.map((d, i) => (
+                      <pre key={i} className={d.added ? 'added' : d.removed ? 'removed' : ''}>
+                        {d.added ? '+ ' : d.removed ? '\u2212 ' : ''}
+                        {d.value}
+                      </pre>
+                    ))}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="secure">
+                  <h3>{L('secureTitle')}</h3>
+                  <p className="hint">{L('secureHint')}</p>
+                  <Input aria-label={L('secureTitle')} type="file" onChange={(e) => setCryptoFile(e.target.files?.[0] || null)} />
+                  <Input
+                    aria-label={L('passwordPlaceholder')}
+                    type="password"
+                    placeholder={L('passwordPlaceholder')}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                  <div className="tools">
+                    <Button disabled={busyDisabled || !cryptoFile || password.length < 10} onClick={() => cryptoAction(true)}>
+                      {L('encryptBtn')}
+                    </Button>
+                    <Button variant="outline" disabled={busyDisabled || !cryptoFile || !password} onClick={() => cryptoAction(false)}>
+                      {L('decryptBtn')}
+                    </Button>
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </section>
+
+            <section className="panel session-panel">
+              <div>
+                <h3>{L('sessionTitle')}</h3>
+                <p className="hint">{L('sessionHint')}</p>
               </div>
-            )}
-
-            {busy ? (
-              <div className="mt-6" role="status" aria-live="polite">
-                <div className="mb-2 flex justify-between text-sm font-semibold text-navy-900">
-                  <span dir="auto">{progress.message}</span>
-                  <span>{Math.round(progress.percent)}%</span>
-                </div>
-                <div className="h-3 overflow-hidden rounded-full bg-steel-200" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress.percent)}>
-                  <div className="h-full rounded-full bg-linear-to-r from-navy-800 to-navy-500 transition-all duration-500" style={{ width: `${progress.percent}%` }} />
-                </div>
+              <div className="tools">
+                <Button variant="outline" disabled={busyDisabled || !text} onClick={saveSession}>
+                  {L('saveSession')}
+                </Button>
+                <Button variant="outline" disabled={busyDisabled} onClick={() => sessionPicker.current?.click()}>
+                  {L('restoreSession')}
+                </Button>
+                <input type="file" accept=".json" ref={sessionPicker} hidden onChange={(e) => restoreSession(e.target.files?.[0])} />
               </div>
-            ) : (
-              <button
-                type="button"
-                disabled={!files.length}
-                onClick={start}
-                className="mt-6 w-full rounded-xl bg-navy-800 px-6 py-4 text-lg font-bold text-white shadow-lg transition hover:bg-navy-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy-600 disabled:cursor-not-allowed disabled:bg-steel-300 disabled:text-steel-500 disabled:shadow-none"
-              >
-                {files.length ? `Process ${files.length} ${files.length === 1 ? 'file' : 'files'}` : 'Add a file to begin'}
-              </button>
-            )}
-          </section>
-        )}
+            </section>
 
-        {phase === 'done' && result && (
-          <section aria-label="Results" className="rounded-3xl border border-steel-300 bg-white p-5 shadow-2xl shadow-black/40 sm:p-8">
-            <h2 className="text-2xl font-extrabold text-navy-900">Your file is ready</h2>
-            <dl className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {[['Files', result.fileCount], ['Words', result.words], ['Characters', result.chars], ['Lines', result.lines]].map(([label, value]) => (
-                <div key={label} className="metallic-bg flex flex-col-reverse rounded-xl border border-steel-300 p-4 text-center">
-                  <dt className="text-xs font-semibold uppercase tracking-wider text-steel-600">{label}</dt>
-                  <dd className="text-2xl font-black text-navy-900">{Number(value).toLocaleString('en-US')}</dd>
+            <section className="panel export">
+              <div>
+                <div className="section-label">
+                  <span>03</span> {L('step3')}
                 </div>
-              ))}
-            </dl>
-
-            <pre dir="auto" className="mt-5 max-h-56 overflow-auto whitespace-pre-wrap rounded-xl border border-steel-200 bg-steel-100 p-4 text-sm text-navy-900">
-              {result.text.slice(0, 1500)}{result.text.length > 1500 ? '\n…' : ''}
-            </pre>
-
-            {[...result.warnings, ...errors].length > 0 && (
-              <div role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
-                {[...result.warnings, ...errors].map((message) => (
-                  <p key={message} dir="auto">{message}</p>
-                ))}
+                <p className="hint">{L('exportHint')}</p>
               </div>
-            )}
+              <div className="export-controls">
+                <Input aria-label={L('fileNameLabel')} value={name} onChange={(e) => setName(e.target.value)} dir="auto" />
+                <select aria-label={L('formatLabel')} value={format} onChange={(e) => setFormat(e.target.value)}>
+                  {['txt', 'pdf', 'docx', 'md', 'html', 'json', 'csv'].map((f) => (
+                    <option key={f}>{f}</option>
+                  ))}
+                </select>
+                <Button disabled={!text || busyDisabled} onClick={runExport}>
+                  <Download size={17} /> {format === 'pdf' ? L('printPdfBtn') : L('downloadBtn')}
+                </Button>
+              </div>
+            </section>
+          </div>
+        </div>
 
-            <button
-              type="button"
-              onClick={download}
-              className="mt-6 flex w-full items-center justify-center gap-3 rounded-xl bg-navy-800 px-6 py-5 text-xl font-extrabold text-white shadow-lg transition hover:bg-navy-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy-600"
-            >
-              <Download size={24} aria-hidden />
-              Download Processed File
-            </button>
-            {settings.format === 'pdf' && <p className="mt-2 text-center text-sm text-steel-600">Choose “Save as PDF” in the print dialog that opens.</p>}
-            <button type="button" onClick={reset} className="mx-auto mt-4 flex items-center gap-2 font-semibold text-navy-700 hover:text-navy-500 focus-visible:outline-2 focus-visible:outline-navy-600">
-              <Undo2 size={16} aria-hidden /> Process another file
-            </button>
-          </section>
-        )}
+        <details className="roadmap">
+          <summary>{L('roadmapSummary')}</summary>
+          <p>{L('roadmapP1')}</p>
+          <p>{L('roadmapP2')}</p>
+        </details>
       </main>
 
-      <footer className="metallic-bg border-t border-steel-400 py-5 text-center text-sm text-navy-900">
-        Powered by <strong className="font-extrabold">Disha Pro Studio</strong>
+      <footer>
+        <span dir="ltr">{L('footerRights')}</span>
+        <span>{L('footerTagline')}</span>
       </footer>
     </div>
   );

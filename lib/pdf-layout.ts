@@ -14,7 +14,6 @@ export function itemsToBoxes(items: unknown[], viewport: number[]): TextBox[] {
 }
 
 function gap(boxes: TextBox[], axis: 'x' | 'y') {
-  if (!boxes.length) return { size: 0, at: 0 };
   const intervals = boxes.map(b => axis==='x' ? [b.x,b.x+b.width] : [b.y-b.height,b.y]).sort((a,b)=>a[0]-b[0]);
   let end=intervals[0][1], size=0, at=0;
   for (const interval of intervals.slice(1)) {
